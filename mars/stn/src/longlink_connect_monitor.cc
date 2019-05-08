@@ -135,6 +135,7 @@ LongLinkConnectMonitor::~LongLinkConnectMonitor() {
 }
 
 bool LongLinkConnectMonitor::MakeSureConnected() {
+    // 当处于重连间隔中时，不会立即连接，所以不能依赖这个方法来保证连接
     __IntervalConnect(kTaskConnect);
     return LongLink::kConnected == longlink_.ConnectStatus();
 }

@@ -87,6 +87,7 @@ bool LongLinkTaskManager::StartTask(const Task& _task) {
     task.link_type = Task::kChannelLong;
 
     lst_cmd_.push_back(task);
+    //任务排序，根据任务优先级排序
     lst_cmd_.sort(__CompareTask);
 
     __RunLoop();
@@ -218,6 +219,8 @@ void LongLinkTaskManager::__RunOnTimeout() {
         std::list<TaskProfile>::iterator next = first;
         ++next;
 
+        // 超时判断前提：1. 已经加入长连接发送队列， 2. 发送时间确定（即已经有部分或全部数据发出）
+        // 是否考虑去掉前提，并且改超时检查为 （当前时间 - 加入待发送队列时间 > 超时时间） ?
         if (first->running_id && 0 < first->transfer_profile.start_send_time) {
             if (0 == first->transfer_profile.last_receive_pkg_time && cur_time - first->transfer_profile.start_send_time >= first->transfer_profile.first_pkg_timeout) {
                 xerror2(TSF"task first-pkg timeout taskid:%_,  nStartSendTime=%_, nfirstpkgtimeout=%_",
@@ -313,6 +316,7 @@ void LongLinkTaskManager::__RunOnStartTask() {
         int error_code = 0;
 
         if (!first->antiavalanche_checked) {
+            //底层获取task要发送的数据  Req2Buf(titan_login.cc)->session_manager_.InterceptReq2Buf->InternalTaskPacker::BuildRequest->session_task_.BuildRequest 再调用上层要发送的数据
 			if (!Req2Buf(first->task.taskid, first->task.user_context, bufreq, buffer_extension, error_code, Task::kChannelLong)) {
 				__SingleRespHandle(first, kEctEnDecode, error_code, kTaskFailHandleTaskEnd, longlink_->Profile());
 				first = next;
@@ -331,6 +335,7 @@ void LongLinkTaskManager::__RunOnStartTask() {
         xassert2(first->antiavalanche_checked);
 		if (!longlinkconnectmon_->MakeSureConnected()) {
             if (0 != first->task.channel_id) {
+                // 对于没有连接的情况，直接结束task
                 __SingleRespHandle(first, kEctLocal, kEctLocalChannelID, kTaskFailHandleTaskEnd, longlink_->Profile());
             }
             
@@ -338,6 +343,7 @@ void LongLinkTaskManager::__RunOnStartTask() {
             continue;
 		}
 
+        // channel_id 可以理解为 标识某个长连接的id（通过这个长连接的连接时间作为标识）, 目前没有设置，所以默认为 0
         if (0 != first->task.channel_id && longlink_->Profile().start_time != first->task.channel_id) {
             __SingleRespHandle(first, kEctLocal, kEctLocalChannelID, kTaskFailHandleTaskEnd, longlink_->Profile());
             first = next;
@@ -364,6 +370,7 @@ void LongLinkTaskManager::__RunOnStartTask() {
         first->current_dyntime_status = (first->task.server_process_cost <= 0) ? dynamic_timeout_.GetStatus() : kEValuating;
         first->transfer_profile.read_write_timeout = __ReadWriteTimeout(first->transfer_profile.first_pkg_timeout);
         first->transfer_profile.send_data_size = bufreq.Length();
+        //将数据放入发送队列中
         first->running_id = longlink_->Send(bufreq, buffer_extension, first->task);
 
         if (!first->running_id) {
@@ -540,6 +547,7 @@ void LongLinkTaskManager::__OnResponse(ErrCmdType _error_type, int _error_code, 
         return;
     }
     
+    //从lst_cmd_查找_taskid的TaskProfile
     std::list<TaskProfile>::iterator it = __Locate(_taskid);
     
     if (lst_cmd_.end() == it) {

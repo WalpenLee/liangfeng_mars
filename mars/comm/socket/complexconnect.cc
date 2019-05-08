@@ -101,6 +101,7 @@ class ConnectCheckFSM : public TcpClientFSM {
 
         if (!observer_) return;
 
+        //首先调用了观察者的OnConnected，这个观察者就是LongLinkConnectObserver
         observer_->OnConnected(index_, addr_, sock_, 0, _rtt);
 
         if (ECheckOK == CheckStatus()) {
@@ -456,7 +457,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
     
     uint64_t  starttime = gettickcount();
     std::vector<ConnectCheckFSM*> vecsocketfsm;
-
+    // 生成ConnectCheckFSM数组
     for (unsigned int i = 0; i < _vecaddr.size(); ++i) {
         xinfo2(TSF"complex.conn %_", _vecaddr[i].url());
 
@@ -515,7 +516,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
             if (NULL == vecsocketfsm[i]) continue;
 
             xgroup2_define(group);
-            vecsocketfsm[i]->PreSelect(sel, group);
+            vecsocketfsm[i]->PreSelect(sel, group);//PreSelect会去执行connect操作
             xgroup2_if(!group.Empty(), TSF"index:%_, @%_, ", i, this) << group;
             timeout = std::min(timeout, vecsocketfsm[i]->Timeout());
         }
@@ -523,6 +524,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
         xdebug2(TSF"timeout:%_, @%_", timeout, this);
         int ret = 0;
 
+        //执行select
         if (INT_MAX == timeout) {
             ret = sel.Select();
         } else {
@@ -549,6 +551,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
         }
 
         // socket
+        //这里应该是个地址池的连接方式，如果其中一个能够成功连接上并且能够正常收发，那么其余的就不需要再尝试了
         for (unsigned int i = 0; i < index; ++i) {
             if (NULL == vecsocketfsm[i]) continue;
 
@@ -557,6 +560,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
             xgroup2_if(!group.Empty(), TSF"index:%_, @%_, ", i, this) << group;
 
             if (TcpClientFSM::EEnd == vecsocketfsm[i]->Status()) {
+                //连接已结束，清理资源，继续尝试下一个
                 if (_observer) _observer->OnFinished(i, socket_address(&vecsocketfsm[i]->Address()), vecsocketfsm[i]->Socket(), vecsocketfsm[i]->Error(),
                                                          vecsocketfsm[i]->Rtt(), vecsocketfsm[i]->TotalRtt(), (int)(gettickcount() - starttime));
 
@@ -571,7 +575,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
             if (TcpClientFSM::EReadWrite == vecsocketfsm[i]->Status() && ConnectCheckFSM::ECheckFail == vecsocketfsm[i]->CheckStatus()) {
                 if (_observer) _observer->OnFinished(i, socket_address(&vecsocketfsm[i]->Address()), vecsocketfsm[i]->Socket(), vecsocketfsm[i]->Error(),
                                                          vecsocketfsm[i]->Rtt(), vecsocketfsm[i]->TotalRtt(), (int)(gettickcount() - starttime));
-
+                //连接出现错误，继续尝试下一个
                 errcode_ = vecsocketfsm[i]->Error();
                 vecsocketfsm[i]->Close();
                 delete vecsocketfsm[i];
@@ -583,7 +587,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
             if (TcpClientFSM::EReadWrite == vecsocketfsm[i]->Status() && ConnectCheckFSM::ECheckOK == vecsocketfsm[i]->CheckStatus()) {
                 if (_observer) _observer->OnFinished(i, socket_address(&vecsocketfsm[i]->Address()), vecsocketfsm[i]->Socket(), vecsocketfsm[i]->Error(),
                                                          vecsocketfsm[i]->Rtt(), vecsocketfsm[i]->TotalRtt(), (int)(gettickcount() - starttime));
-
+                //连接正常，跳出循环
                 errcode_ = vecsocketfsm[i]->Error();
                 xinfo2(TSF"index:%_, sock:%_, suc ConnectImpatient:%_:%_, RTT:(%_, %_), @%_", i, vecsocketfsm[i]->Socket(),
                        vecsocketfsm[i]->IP(), vecsocketfsm[i]->Port(), vecsocketfsm[i]->Rtt(), vecsocketfsm[i]->TotalRtt(), this);
@@ -601,6 +605,8 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
         // end of loop
         bool all_invalid = true;
 
+        //循环判断所有的连接是否都是无效的，如果都是无效的，继续执行这个while死循环，否则如果有一个是有效的，那么跳出来。
+        //也就是说，再次执行的时候index也会进行上面的自增++运算，那么继续往后尝试下一个连接。
         for (unsigned int i = 0; i < vecsocketfsm.size(); ++i) {
             if (NULL != vecsocketfsm[i]) {
                 all_invalid = false;
@@ -611,6 +617,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
         if (all_invalid || INVALID_SOCKET != retsocket) break;
     } while (true);
 
+    //将无效的连接关闭，清除资源
     for (unsigned int i = 0; i < vecsocketfsm.size(); ++i) {
         if (NULL != vecsocketfsm[i]) {
             vecsocketfsm[i]->Close(false);
@@ -624,6 +631,7 @@ SOCKET ComplexConnect::ConnectImpatient(const std::vector<socket_address>& _veca
     totalcost_ = (int)(::gettickcount() - starttime);
     xinfo2(TSF"retsocket:%_, connrtt:%_, conntotalrtt:%_, totalcost:%_, @%_", retsocket, index_conn_rtt_, index_conn_totalcost_, totalcost_, this);
 
+    //返回一个可用的socket
     return retsocket;
 }
 

@@ -231,6 +231,7 @@ void TcpClientFSM::AfterConnectSelect(const SocketSelect& _sel, XLogger& _log) {
     if (_sel.Exception_FD_ISSET(sock_)) {
         socklen_t len = sizeof(error_);
 
+        //获得错误状态
         if (0 != getsockopt(sock_, SOL_SOCKET, SO_ERROR, &error_, &len)) { error_ = socket_errno; }
 
         xwarn2(TSF"close connect exception: sock:%_, err(%_, %_)", sock_, error_, socket_strerror(error_)) >> _log;

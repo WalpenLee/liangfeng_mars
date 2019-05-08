@@ -270,6 +270,7 @@ void LongLink::Disconnect(TDisconnectInternalCode _scene) {
     }
 }
 
+//长链接心跳维持包
 bool LongLink::__NoopReq(XLogger& _log, Alarm& _alarm, bool need_active_timeout) {
     AutoBuffer buffer;
     uint32_t req_cmdid = 0;
@@ -361,6 +362,7 @@ void LongLink::__UpdateProfile(const ConnectProfile& _conn_profile) {
     if (0 != conn_profile_.disconn_time) broadcast_linkstatus_signal_(conn_profile_);
 }
 
+//时间到了，终止socket 发送任务
 void LongLink::__OnAlarm() {
     readwritebreak_.Break();
 #ifdef ANDROID
@@ -368,6 +370,7 @@ void LongLink::__OnAlarm() {
 #endif
 }
 
+//LongLink 线程执行任务
 void LongLink::__Run() {
     // sync to MakeSureConnected data reset
     {
@@ -558,8 +561,8 @@ SOCKET LongLink::__RunConnect(ConnectProfile& _conn_profile) {
 
 void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode, ConnectProfile& _profile) {
     
-    Alarm alarmnoopinterval(boost::bind(&LongLink::__OnAlarm, this), false);
-    Alarm alarmnooptimeout(boost::bind(&LongLink::__OnAlarm, this), false);
+    Alarm alarmnoopinterval(boost::bind(&LongLink::__OnAlarm, this), false);//发送心跳包的间隔时长
+    Alarm alarmnooptimeout(boost::bind(&LongLink::__OnAlarm, this), false); //发送心跳包之后的超时时长
     
     std::map <uint32_t, StreamResp> sent_taskids;
     std::vector<LongLinkNWriteData> nsent_datas;
@@ -595,7 +598,7 @@ void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode,
             alarmnoopinterval.Cancel();
             alarmnoopinterval.Start((int)noop_interval);
         }
-        
+        //正处于发送心跳包中已超时
         if (nooping && (alarmnooptimeout.Status() == Alarm::kInit || alarmnooptimeout.Status() == Alarm::kCancel)) {
             xassert2(false, "noop but alarmnooptimeout not running, take as noop timeout");
             _errtype = kEctSocket;
@@ -645,6 +648,7 @@ void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode,
             goto End;
         }
         
+        //检测心跳包状态
         if (nooping && alarmnooptimeout.Status() == Alarm::kOnAlarm) {
             xerror2(TSF"task socket close sock:%0, noop timeout, nread:%_, nwrite:%_", _sock, socket_nread(_sock), socket_nwrite(_sock)) >> close_log;
 //            __NotifySmartHeartbeatJudgeDozeStyle();
@@ -693,9 +697,10 @@ void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode,
             
             if (0 > writelen) writelen = 0;
             
+            //获取心跳间隔时间
             unsigned long long noop_interval = __GetNextHeartbeatInterval();
             alarmnoopinterval.Cancel();
-            alarmnoopinterval.Start((int)noop_interval);
+            alarmnoopinterval.Start((int)noop_interval);//启动定时器
             
             xinfo2(TSF"all send:%_, count:%_, ", writelen, lstsenddata_.size()) >> xlog_group;
             
@@ -727,6 +732,7 @@ void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode,
         
         if (sel.Read_FD_ISSET(_sock)) {
             bufrecv.AllocWrite(64 * 1024, false);
+            //接收数据
             ssize_t recvlen = recv(_sock, bufrecv.PosPtr(), 64 * 1024, 0);
             
             if (0 == recvlen) {
@@ -797,14 +803,14 @@ void LongLink::__RunReadWrite(SOCKET _sock, ErrCmdType& _errtype, int& _errcode,
                 if (LONGLINK_UNPACK_STREAM_PACKAGE == unpackret) {
                     if (OnRecv)
                         OnRecv(taskid, packlen, packlen);
-                } else if (!__NoopResp(cmdid, taskid, stream_resp.stream, stream_resp.extension, alarmnooptimeout, nooping, _profile)) {
-                    if (OnResponse)
+                } else if (!__NoopResp(cmdid, taskid, stream_resp.stream, stream_resp.extension, alarmnooptimeout, nooping, _profile)) {//收到服务器心跳包回执
+                    if (OnResponse)//不是心跳包，则把数据交给LongLinkTaskMager去解析数据
                         OnResponse(kEctOK, 0, cmdid, taskid, stream_resp.stream, stream_resp.extension, _profile);
 					sent_taskids.erase(taskid);
                 }
             }
         }
-    }
+    }//while结束
     
     
 End:
